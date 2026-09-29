@@ -7,3 +7,7 @@
 
 
 codex 같은 coding harness를 사용할 때 불편하더라고 바로 tool_use로 휴대폰에 클립보드를 가져온다거나 요청을 보내면 파일을 선택해서 바로 보내준다거나 이런걸 하고 싶은데 불가능하니까 프록시를 만들든 뭘 하든 해서 프로젝트를 만들고 싶어 그러기 위해선 안드로이드 앱과 프록시 두개가 다 필요할 듯 해. 사용하게 된다면 백엔드에는 Go를 안드로이드엔 코틀린을 사용하도록 해.
+
+https://github.com/sleepysoong/hoard/blob/main/.github/workflows/build-and-release.yml
+
+이 ci도 추가 ㄱ
