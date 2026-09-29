@@ -1,0 +1,107 @@
+name: Build and Release
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout latest main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Test proxy
+        run: go test ./...
+      - name: Build proxy binaries
+        run: |
+          mkdir -p dist
+          GOOS=linux GOARCH=amd64 go build -trimpath -o dist/bramble-linux-amd64 ./cmd/bramble
+          GOOS=linux GOARCH=arm64 go build -trimpath -o dist/bramble-linux-arm64 ./cmd/bramble
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - name: Install compile SDK
+        run: sdkmanager "platforms;android-37.0" "build-tools;36.0.0"
+
+      - name: Bump version
+        id: version
+        shell: bash
+        run: |
+          source version.properties
+          IFS=. read -r major minor patch <<< "$versionName"
+          next_code=$((versionCode + 1))
+          next_name="${major}.${minor}.$((patch + 1))"
+          printf 'versionCode=%s\nversionName=%s\n' "$next_code" "$next_name" > version.properties
+          echo "name=$next_name" >> "$GITHUB_OUTPUT"
+          echo "code=$next_code" >> "$GITHUB_OUTPUT"
+
+      - name: Restore signing key
+        env:
+          BRAMBLE_KEYSTORE_B64: ${{ secrets.BRAMBLE_KEYSTORE_B64 }}
+          BRAMBLE_KEYSTORE_PASSWORD: ${{ secrets.BRAMBLE_KEYSTORE_PASSWORD }}
+          BRAMBLE_KEY_ALIAS: ${{ secrets.BRAMBLE_KEY_ALIAS }}
+          BRAMBLE_KEY_PASSWORD: ${{ secrets.BRAMBLE_KEY_PASSWORD }}
+        run: |
+          test -n "$BRAMBLE_KEYSTORE_B64"
+          test -n "$BRAMBLE_KEYSTORE_PASSWORD"
+          test -n "$BRAMBLE_KEY_ALIAS"
+          test -n "$BRAMBLE_KEY_PASSWORD"
+          printf '%s' "$BRAMBLE_KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/bramble-release.jks"
+          echo "BRAMBLE_KEYSTORE_PATH=$RUNNER_TEMP/bramble-release.jks" >> "$GITHUB_ENV"
+
+      - name: Build signed APK
+        env:
+          BRAMBLE_KEYSTORE_PASSWORD: ${{ secrets.BRAMBLE_KEYSTORE_PASSWORD }}
+          BRAMBLE_KEY_ALIAS: ${{ secrets.BRAMBLE_KEY_ALIAS }}
+          BRAMBLE_KEY_PASSWORD: ${{ secrets.BRAMBLE_KEY_PASSWORD }}
+        run: ./gradlew :app:assembleRelease --no-daemon --console=plain
+      - name: Name release artifacts
+        run: |
+          cp app/build/outputs/apk/release/app-release.apk "dist/bramble-${{ steps.version.outputs.name }}.apk"
+          sha256sum dist/* > dist/SHA256SUMS
+
+      - name: Commit version bump
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add version.properties
+          git commit -m "chore(release): bump version to ${{ steps.version.outputs.name }} [skip ci]"
+          for i in 1 2 3; do
+            git pull --rebase origin main && git push origin main && exit 0
+            sleep 5
+          done
+          exit 1
+      - name: Tag release
+        run: |
+          git tag "v${{ steps.version.outputs.name }}"
+          git push origin "v${{ steps.version.outputs.name }}"
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.name }}
+          name: Bramble v${{ steps.version.outputs.name }}
+          generate_release_notes: true
+          files: dist/*
