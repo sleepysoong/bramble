@@ -9,7 +9,7 @@ import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 
-data class PhoneRequest(val id: String, val kind: String, val prompt: String)
+data class PhoneRequest(val id: String, val kind: String, val prompt: String, val expiresAtMillis: Long)
 
 class RelayClient(private val baseUrl: String, private val token: String) {
     private fun open(path: String, method: String): HttpURLConnection =
@@ -32,7 +32,9 @@ class RelayClient(private val baseUrl: String, private val token: String) {
             when (conn.responseCode) {
                 204 -> null
                 200 -> JSONObject(conn.inputStream.bufferedReader().use { it.readText() }).let {
-                    PhoneRequest(it.getString("id"), it.getString("kind"), it.optString("prompt"))
+                    PhoneRequest(it.getString("id"), it.getString("kind"), it.optString("prompt"),
+                        runCatching { java.time.Instant.parse(it.getString("expires_at")).toEpochMilli() }
+                            .getOrDefault(System.currentTimeMillis() + 120_000))
                 }
                 else -> error("서버 응답: ${conn.responseCode}")
             }

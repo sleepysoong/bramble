@@ -79,6 +79,9 @@ func TestClipboardRoundTrip(t *testing.T) {
 	if request.Kind != "clipboard" || request.Prompt != "Share for test" {
 		t.Fatalf("request: %+v", request)
 	}
+	if request.ExpiresAt.Before(time.Now()) || request.ExpiresAt.After(time.Now().Add(2*time.Minute)) {
+		t.Fatalf("invalid request deadline: %s", request.ExpiresAt)
+	}
 
 	answer := authRequest(t, "POST", server.URL+"/v1/requests/"+request.ID+"/result", strings.NewReader(`{"text":"hello from phone"}`))
 	res, err = client.Do(answer)

@@ -20,9 +20,10 @@ import (
 const MaxFileBytes = 20 << 20
 
 type Request struct {
-	ID     string `json:"id"`
-	Kind   string `json:"kind"`
-	Prompt string `json:"prompt"`
+	ID        string    `json:"id"`
+	Kind      string    `json:"kind"`
+	Prompt    string    `json:"prompt"`
+	ExpiresAt time.Time `json:"expires_at"`
 }
 
 type Result struct {
@@ -114,13 +115,15 @@ func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	input.ID = id[:32]
+	now := time.Now()
+	input.ExpiresAt = now.Add(2 * time.Minute).UTC()
 	s.mu.Lock()
 	if len(s.tasks) >= 64 {
 		s.mu.Unlock()
 		http.Error(w, "queue full", http.StatusTooManyRequests)
 		return
 	}
-	s.tasks[input.ID] = &task{request: input, created: time.Now(), done: make(chan struct{})}
+	s.tasks[input.ID] = &task{request: input, created: now, done: make(chan struct{})}
 	s.mu.Unlock()
 	time.AfterFunc(2*time.Minute, func() {
 		s.finish(input.ID, Result{Error: "phone did not answer within two minutes"})
