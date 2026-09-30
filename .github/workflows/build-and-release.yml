@@ -15,38 +15,44 @@ jobs:
       contents: write
     steps:
       - name: Checkout latest main
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: main
           fetch-depth: 0
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
-      - name: Test proxy
-        run: go test ./...
-      - name: Build proxy binaries
+      - name: Check proxy
         run: |
-          mkdir -p dist
-          GOOS=linux GOARCH=amd64 go build -trimpath -o dist/bramble-linux-amd64 ./cmd/bramble
-          GOOS=linux GOARCH=arm64 go build -trimpath -o dist/bramble-linux-arm64 ./cmd/bramble
-
+          go vet ./...
+          go test -race ./...
       - name: Setup Java
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '21'
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v3
+        uses: gradle/actions/setup-gradle@v5
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
         with:
           packages: platform-tools
       - name: Install compile SDK
         run: sdkmanager "platforms;android-37.0" "build-tools;36.0.0"
-      - name: Test Android relay
-        run: ./gradlew :app:testDebugUnitTest --no-daemon --console=plain
+      - name: Check Android
+        run: ./gradlew :app:testDebugUnitTest :app:lintDebug --no-daemon --console=plain
+      - name: Upload Android review artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: android-review-${{ github.run_id }}
+          retention-days: 7
+          if-no-files-found: warn
+          path: |
+            app/build/test-artifacts/glass/*.png
+            app/build/reports/tests/testDebugUnitTest/
 
       - name: Bump version
         id: version
@@ -59,6 +65,14 @@ jobs:
           printf 'versionCode=%s\nversionName=%s\n' "$next_code" "$next_name" > version.properties
           echo "name=$next_name" >> "$GITHUB_OUTPUT"
           echo "code=$next_code" >> "$GITHUB_OUTPUT"
+
+      - name: Build proxy binaries
+        env:
+          BRAMBLE_VERSION: ${{ steps.version.outputs.name }}
+        run: |
+          mkdir -p dist
+          GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-X github.com/sleepysoong/bramble/internal/mcp.Version=$BRAMBLE_VERSION" -o dist/bramble-linux-amd64 ./cmd/bramble
+          GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "-X github.com/sleepysoong/bramble/internal/mcp.Version=$BRAMBLE_VERSION" -o dist/bramble-linux-arm64 ./cmd/bramble
 
       - name: Restore signing key
         env:
@@ -82,26 +96,22 @@ jobs:
         run: ./gradlew :app:assembleRelease --no-daemon --console=plain
       - name: Name release artifacts
         run: |
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs app/build/outputs/apk/release/app-release.apk
           cp app/build/outputs/apk/release/app-release.apk "dist/bramble-${{ steps.version.outputs.name }}.apk"
-          sha256sum dist/* > dist/SHA256SUMS
+          (cd dist && sha256sum bramble-* > SHA256SUMS)
 
-      - name: Commit version bump
+      - name: Commit and tag release
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add version.properties
           git commit -m "chore(release): bump version to ${{ steps.version.outputs.name }} [skip ci]"
-          for i in 1 2 3; do
-            git pull --rebase origin main && git push origin main && exit 0
-            sleep 5
-          done
-          exit 1
-      - name: Tag release
-        run: |
           git tag "v${{ steps.version.outputs.name }}"
-          git push origin "v${{ steps.version.outputs.name }}"
+          # A changed main needs a fresh build; rebasing here would publish artifacts
+          # that do not match their tag. Update the version commit and tag together.
+          git push --atomic origin HEAD:refs/heads/main "refs/tags/v${{ steps.version.outputs.name }}"
       - name: Publish release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: v${{ steps.version.outputs.name }}
           name: Bramble v${{ steps.version.outputs.name }}

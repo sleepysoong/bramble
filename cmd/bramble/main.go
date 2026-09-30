@@ -38,7 +38,7 @@ func main() {
 			log.Fatal(err)
 		}
 		log.Printf("listening on %s; uploads in %s", *listen, *data)
-		httpServer := &http.Server{Addr: *listen, Handler: s, ReadHeaderTimeout: 5 * time.Second}
+		httpServer := &http.Server{Addr: *listen, Handler: s, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 130 * time.Second, WriteTimeout: 135 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
 		log.Fatal(httpServer.ListenAndServe())
 	case "mcp":
 		url := os.Getenv("BRAMBLE_SERVER")
@@ -48,6 +48,12 @@ func main() {
 		token := os.Getenv("BRAMBLE_TOKEN")
 		if token == "" {
 			log.Fatal("set BRAMBLE_TOKEN")
+		}
+		if err := relay.ValidateToken(token); err != nil {
+			log.Fatal(err)
+		}
+		if err := relay.ValidateBaseURL(url); err != nil {
+			log.Fatal(err)
 		}
 		s := &mcp.Server{BaseURL: url, Token: token, Output: os.Stdout}
 		if err := s.Run(os.Stdin); err != nil {

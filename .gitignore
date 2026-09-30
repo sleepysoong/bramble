@@ -6,4 +6,7 @@ local.properties
 *.jks
 *.keystore
 *.apk
+*.aab
+/bramble
+/dist/
 .DS_Store
